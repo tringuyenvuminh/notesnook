@@ -87,6 +87,7 @@ const TITLE_ONLY_NOTE: Note = {
 const PASSWORD = "123abc123abc";
 
 const APP_LOCK_PASSWORD = "lockapporelse🔪";
+const APP_LOCK_DURESS_PASSWORD = "duresslock🔐";
 
 function getTestId(
   id: string,
@@ -221,5 +222,6 @@ export {
   orderByOptions,
   sortByOptions,
   groupByOptions,
-  APP_LOCK_PASSWORD
+  APP_LOCK_PASSWORD,
+  APP_LOCK_DURESS_PASSWORD
 };

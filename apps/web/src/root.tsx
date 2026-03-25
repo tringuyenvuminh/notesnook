@@ -34,6 +34,10 @@ import AppLock from "./views/app-lock";
 import { Text } from "@theme-ui/components";
 import { EV, EVENTS } from "@notesnook/core";
 import { useEffect, useState } from "react";
+import {
+  consumeDuressWipePending,
+  wipeAllNotesAfterDuressAppLockUnlock
+} from "./common/duress-app-lock-wipe";
 
 export async function startApp(children?: React.ReactNode) {
   const rootElement = document.getElementById("root");
@@ -111,6 +115,9 @@ function RouteWrapper(props: {
   const result = usePromise(async () => {
     performance.mark("load:database");
     await loadDatabase(persistence);
+    if (consumeDuressWipePending()) {
+      await wipeAllNotesAfterDuressAppLockUnlock();
+    }
   }, [path, persistence]);
 
   if (result.status === "rejected") {

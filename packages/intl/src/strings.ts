@@ -1207,6 +1207,24 @@ $day$: Current day (eg. Monday)`,
   unlockWithBiometricsDesc: () =>
     t`Unlock the app with biometric authentication. This requires biometrics to be enabled on your device.`,
   appLockDisabled: () => t`App lock disabled`,
+  enterAppLockPinCode: () => t`Enter PIN code`,
+  confirmAppLockPinCode: () => t`Confirm PIN code`,
+  enterDuressAppLockPin: () => t`Enter Duress PIN`,
+  confirmDuressAppLockPin: () => t`Confirm Duress PIN code`,
+  appLockPinUnlockHintMd: () =>
+    t`*Use this code to **unlock the app**.*`,
+  appLockDuressPinWipeHintMd: () =>
+    t`*Use this code to **wipe your app** (all notes will be permanently deleted locally).*`,
+  appLockPrimaryPinMismatch: () =>
+    t`PIN and confirmation do not match.`,
+  appLockDuressPinMismatch: () =>
+    t`Duress PIN and confirmation do not match.`,
+  appLockDuressPinMustDiffer: () =>
+    t`Duress PIN must be different from your normal PIN.`,
+  changeDuressAppLockPin: () => t`Change Duress PIN`,
+  setupDuressAppLockPin: () => t`Set up Duress PIN`,
+  setupDuressAppLockPinDesc: () =>
+    t`Add a second PIN that unlocks the app after deleting all notes.`,
   backupRestore: () => t`Backup & restore`,
   backupsDesc: () => t`Manage your backups and restore data`,
   backupNow: () => t`Backup now`,

@@ -34,6 +34,11 @@ export type PasswordDialogProps<
   title: string;
   subtitle?: string;
   message?: string;
+  /**
+   * Markdown message blocks rendered right after a specific input.
+   * Useful for grouping hints between sets of fields (e.g. App Lock vs Duress PIN).
+   */
+  afterInput?: Partial<Record<TInputId, string>>;
   inputs: Record<TInputId, FieldProps>;
   validate: (passwords: Record<TInputId, string>) => Promise<boolean>;
   checks?: Record<TCheckId, Check>;
@@ -42,7 +47,7 @@ const PasswordDialog = DialogManager.register(function PasswordDialog<
   TInputId extends string,
   TCheckId extends string
 >(props: PasswordDialogProps<TInputId, TCheckId>) {
-  const { checks, inputs, message, validate, onClose } = props;
+  const { checks, inputs, message, afterInput, validate, onClose } = props;
   const [error, setError] = useState<string>();
   const [isLoading, setIsLoading] = useState(false);
 
@@ -108,16 +113,27 @@ const PasswordDialog = DialogManager.register(function PasswordDialog<
           />
         ) : null}
         {Object.entries<FieldProps>(inputs).map(([id, input], index) => (
-          <Field
-            autoFocus={index === 0}
-            {...input}
-            key={id}
-            id={id}
-            name={id}
-            data-test-id={id}
-            required
-            type="password"
-          />
+          <Box key={id}>
+            <Field
+              autoFocus={index === 0}
+              {...input}
+              id={id}
+              name={id}
+              data-test-id={id}
+              required
+              type="password"
+            />
+            {afterInput?.[id as TInputId] ? (
+              <Text
+                as="span"
+                variant="body"
+                mt={1}
+                dangerouslySetInnerHTML={{
+                  __html: mdToHtml(afterInput[id as TInputId] as string)
+                }}
+              />
+            ) : null}
+          </Box>
         ))}
 
         {checks

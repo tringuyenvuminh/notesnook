@@ -58,6 +58,18 @@ export type CredentialWithoutSecret =
 export type SerializableCredential = CredentialWithoutSecret & {
   active: boolean;
 };
+
+/** Second wrapping key for the same master key; unlock attempts run after the primary PIN and may trigger a wipe (web). */
+export const APP_LOCK_DURESS_CREDENTIAL_ID = "duress" as const;
+
+export function isDuressAppLockCredential(
+  c: Pick<SerializableCredential, "type" | "id">
+): boolean {
+  return (
+    c.type === "password" && c.id === APP_LOCK_DURESS_CREDENTIAL_ID
+  );
+}
+
 export type CredentialWithSecret =
   | Omit<PasswordCredential, "salt" | "iterations">
   | Omit<SecurityKeyCredential, "config">;
@@ -144,7 +156,10 @@ class KeyStore extends BaseStore<KeyStore> {
     super(setState, get);
   }
 
-  activeCredentials = () => this.get().credentials.filter((c) => c.active);
+  activeCredentials = () =>
+    this.get().credentials.filter(
+      (c) => c.active && !isDuressAppLockCredential(c)
+    );
 
   init = async (
     config: { persistence: "memory" | "db" } = { persistence: "db" }
@@ -204,18 +219,23 @@ class KeyStore extends BaseStore<KeyStore> {
     this.set((store) => store.credentials.splice(index, 1));
 
     await this.#metadataStore.delete(this.getCredentialKey(credential));
+    if (credential.type === "password" && credential.id === "password") {
+      await this.#removeDuressCredentialIfPresent();
+    }
     await this.#metadataStore.set("credentials", this.get().credentials);
   };
 
   activate = async (
-    credential: CredentialWithSecret | CredentialWithoutSecret
+    credential: CredentialWithSecret | CredentialWithoutSecret,
+    options?: { persistActive?: boolean }
   ) => {
+    const persistActive = options?.persistActive !== false;
     const cred = this.findCredential(credential);
     if (!cred)
       throw new Error(`No credential with id "${credential.id}" registered.`);
 
     if (await this.credentialHasKey(credential)) {
-      await this.update(credential, (c) => (c.active = true));
+      await this.update(credential, (c) => (c.active = persistActive));
       return;
     }
 
@@ -233,7 +253,7 @@ class KeyStore extends BaseStore<KeyStore> {
     await this.#metadataStore.deleteMany([this.#keyId, this.#wrappingKeyId]);
     this.#key = originalKey;
     this.set({ isLocked: false });
-    await this.update(credential, (c) => (c.active = true));
+    await this.update(credential, (c) => (c.active = persistActive));
   };
 
   credentialHasKey = async (credential: CredentialQuery) => {
@@ -249,6 +269,9 @@ class KeyStore extends BaseStore<KeyStore> {
       throw new Error(`No credential with id "${credential.id}" registered.`);
 
     await this.update(credential, (c) => (c.active = false));
+    if (credential.type === "password" && credential.id === "password") {
+      await this.#removeDuressCredentialIfPresent();
+    }
     this.set({ isLocked: false });
   };
 
@@ -486,6 +509,18 @@ class KeyStore extends BaseStore<KeyStore> {
         "credentials"
       )) || []
     );
+  };
+
+  #removeDuressCredentialIfPresent = async () => {
+    const { credentials } = this.get();
+    const idx = credentials.findIndex(
+      (c) =>
+        c.type === "password" && c.id === APP_LOCK_DURESS_CREDENTIAL_ID
+    );
+    if (idx <= -1) return;
+    const d = credentials[idx];
+    await this.#metadataStore.delete(this.getCredentialKey(d));
+    this.set((store) => store.credentials.splice(idx, 1));
   };
 
   private getCredentialKey = (credential: CredentialQuery) => {

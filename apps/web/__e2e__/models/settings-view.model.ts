@@ -21,12 +21,13 @@ import { Page } from "@playwright/test";
 import { downloadAndReadFile, getTestId, uploadFile } from "../utils";
 import {
   confirmDialog,
-  fillConfirmPasswordDialog,
+  fillAppLockCredentialSetupDialog,
   fillPasswordDialog,
   waitForDialog,
   waitToHaveText
 } from "./utils";
 import { NavigationMenuModel } from "./navigation-menu.model";
+import { APP_LOCK_DURESS_PASSWORD } from "../utils";
 
 export class SettingsViewModel {
   private readonly page: Page;
@@ -165,7 +166,11 @@ export class SettingsViewModel {
     await appLockSwitch.click();
     await fillPasswordDialog(this.page, userPassword);
     await this.page.waitForTimeout(500);
-    await fillConfirmPasswordDialog(this.page, appLockPassword);
+    await fillAppLockCredentialSetupDialog(
+      this.page,
+      appLockPassword,
+      APP_LOCK_DURESS_PASSWORD
+    );
     await this.page.waitForTimeout(500);
   }
 

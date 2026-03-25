@@ -22,6 +22,7 @@ import { checkFeature, verifyAccount } from "../../common";
 import { Checkmark } from "../../components/icons";
 import { showPasswordDialog } from "../../dialogs/password-dialog";
 import {
+  APP_LOCK_DURESS_CREDENTIAL_ID,
   CredentialType,
   CredentialWithSecret,
   CredentialWithoutSecret,
@@ -29,6 +30,7 @@ import {
   useKeyStore,
   wrongCredentialError
 } from "../../interfaces/key-store";
+import { userEligibleForDuressAppLock } from "../../utils/app-lock-duress-eligibility";
 import { useStore as useUserStore } from "../../stores/user-store";
 import { generatePassword } from "../../utils/password-generator";
 import { showToast } from "../../utils/toast";
@@ -131,6 +133,12 @@ export const AppLockSettings: SettingsGroup[] = [
           const isEnabled = credential?.active;
 
           const inputs: SettingComponent[] = [];
+          const duressCred = useKeyStore
+            .getState()
+            .findCredential({
+              type: "password",
+              id: APP_LOCK_DURESS_CREDENTIAL_ID
+            });
           if (isEnabled) {
             inputs.push({
               type: "button",
@@ -178,6 +186,62 @@ export const AppLockSettings: SettingsGroup[] = [
               },
               variant: "secondary"
             });
+
+            if (duressCred) {
+              inputs.push({
+                type: "button",
+                title: strings.changeDuressAppLockPin(),
+                action: async () => {
+                  const result = await showPasswordDialog({
+                    title: strings.changeDuressAppLockPin(),
+                    inputs: {
+                      oldPassword: {
+                        label: strings.oldPassword(),
+                        autoComplete: "current-password"
+                      },
+                      newPassword: {
+                        label: strings.newPassword(),
+                        autoComplete: "new-password"
+                      },
+                      confirmPassword: {
+                        label: strings.confirmPassword(),
+                        autoComplete: "new-password"
+                      }
+                    },
+                    validate({ newPassword, oldPassword, confirmPassword }) {
+                      if (newPassword !== confirmPassword)
+                        return Promise.resolve(false);
+                      return useKeyStore
+                        .getState()
+                        .changeCredential(
+                          {
+                            type: "password",
+                            id: APP_LOCK_DURESS_CREDENTIAL_ID,
+                            password: oldPassword
+                          },
+                          {
+                            type: "password",
+                            id: APP_LOCK_DURESS_CREDENTIAL_ID,
+                            password: newPassword
+                          }
+                        )
+                        .then(() => true)
+                        .catch(() => false);
+                    }
+                  });
+                  if (result)
+                    showToast("success", strings.passwordChangedSuccessfully());
+                },
+                variant: "secondary"
+              });
+            } else if (userEligibleForDuressAppLock()) {
+              inputs.push({
+                type: "button",
+                title: strings.setupDuressAppLockPin(),
+                action: () => addDuressAppLockCredential(),
+                variant: "secondary"
+              });
+            }
           }
 
           if (
@@ -289,39 +353,172 @@ export const AppLockSettings: SettingsGroup[] = [
   }
 ];
 
+async function addDuressAppLockCredential() {
+  if (!(await authenticateAppLock())) {
+    showToast("error", strings.biometricsAuthError());
+    return;
+  }
+  const added = await showPasswordDialog({
+    title: strings.setupDuressAppLockPin(),
+    subtitle: strings.setupDuressAppLockPinDesc(),
+    inputs: {
+      currentPassword: {
+        label: strings.oldPassword(),
+        autoComplete: "current-password"
+      },
+      duressPassword: {
+        label: strings.enterDuressAppLockPin(),
+        autoComplete: "new-password"
+      },
+      confirmDuressPassword: {
+        label: strings.confirmDuressAppLockPin(),
+        autoComplete: "new-password"
+      }
+    },
+    async validate({
+      currentPassword,
+      duressPassword,
+      confirmDuressPassword
+    }) {
+      if (duressPassword !== confirmDuressPassword) {
+        throw new Error(strings.appLockDuressPinMismatch());
+      }
+      if (currentPassword === duressPassword) {
+        throw new Error(strings.appLockDuressPinMustDiffer());
+      }
+      const ks = useKeyStore.getState();
+      const ok = await ks.verifyCredential({
+        type: "password",
+        id: "password",
+        password: currentPassword
+      });
+      if (!ok) throw new Error(strings.passwordIncorrect());
+
+      await ks.register({
+        type: "password",
+        id: APP_LOCK_DURESS_CREDENTIAL_ID,
+        salt: window.crypto.getRandomValues(new Uint8Array(16)),
+        iterations: DEFAULT_ITERATIONS
+      });
+      await ks.activate(
+        {
+          type: "password",
+          id: APP_LOCK_DURESS_CREDENTIAL_ID,
+          password: duressPassword
+        },
+        { persistActive: false }
+      );
+      return true;
+    }
+  });
+  if (added) showToast("success", strings.passwordChangedSuccessfully());
+}
+
 async function registerCredential(type: CredentialType) {
   if (type === "password") {
-    await showPasswordDialog({
-      title: strings.appLock(),
-      subtitle: strings.enterPasswordOrPin(),
-      inputs: {
-        password: {
-          label: strings.password(),
-          autoComplete: "new-password"
+    if (userEligibleForDuressAppLock()) {
+      await showPasswordDialog({
+        title: strings.setupAppLockPin(),
+        subtitle: strings.enterPasswordOrPin(),
+        inputs: {
+          password: {
+            label: strings.enterAppLockPinCode(),
+            autoComplete: "new-password"
+          },
+          confirmPassword: {
+            label: strings.confirmAppLockPinCode(),
+            autoComplete: "new-password"
+          },
+          duressPassword: {
+            label: strings.enterDuressAppLockPin(),
+            autoComplete: "new-password"
+          },
+          confirmDuressPassword: {
+            label: strings.confirmDuressAppLockPin(),
+            autoComplete: "new-password"
+          }
         },
-        confirmPassword: {
-          label: strings.confirmPassword(),
-          autoComplete: "new-password"
-        }
-      },
-      async validate({ confirmPassword, password }) {
-        if (confirmPassword !== password) return false;
-        const { register, activate } = useKeyStore.getState();
-        await register({
-          type,
-          id: "password",
-          salt: window.crypto.getRandomValues(new Uint8Array(16)),
-          iterations: DEFAULT_ITERATIONS
-        }).then(() =>
-          activate({
+        afterInput: {
+          confirmPassword: strings.appLockPinUnlockHintMd(),
+          confirmDuressPassword: strings.appLockDuressPinWipeHintMd()
+        },
+        async validate({
+          password,
+          confirmPassword,
+          duressPassword,
+          confirmDuressPassword
+        }) {
+          if (confirmPassword !== password) {
+            throw new Error(strings.appLockPrimaryPinMismatch());
+          }
+          if (confirmDuressPassword !== duressPassword) {
+            throw new Error(strings.appLockDuressPinMismatch());
+          }
+          if (password === duressPassword) {
+            throw new Error(strings.appLockDuressPinMustDiffer());
+          }
+          const { register, activate } = useKeyStore.getState();
+          await register({
+            type,
+            id: "password",
+            salt: window.crypto.getRandomValues(new Uint8Array(16)),
+            iterations: DEFAULT_ITERATIONS
+          });
+          await activate({
             type,
             id: "password",
             password
-          })
-        );
-        return true;
-      }
-    });
+          });
+          await register({
+            type: "password",
+            id: APP_LOCK_DURESS_CREDENTIAL_ID,
+            salt: window.crypto.getRandomValues(new Uint8Array(16)),
+            iterations: DEFAULT_ITERATIONS
+          });
+          await activate(
+            {
+              type: "password",
+              id: APP_LOCK_DURESS_CREDENTIAL_ID,
+              password: duressPassword
+            },
+            { persistActive: false }
+          );
+          return true;
+        }
+      });
+    } else {
+      await showPasswordDialog({
+        title: strings.appLock(),
+        subtitle: strings.enterPasswordOrPin(),
+        inputs: {
+          password: {
+            label: strings.password(),
+            autoComplete: "new-password"
+          },
+          confirmPassword: {
+            label: strings.confirmPassword(),
+            autoComplete: "new-password"
+          }
+        },
+        async validate({ confirmPassword, password }) {
+          if (confirmPassword !== password) return false;
+          const { register, activate } = useKeyStore.getState();
+          await register({
+            type,
+            id: "password",
+            salt: window.crypto.getRandomValues(new Uint8Array(16)),
+            iterations: DEFAULT_ITERATIONS
+          }).then(() =>
+            activate({
+              type,
+              id: "password",
+              password
+            })
+          );
+          return true;
+        }
+      });
+    }
   } else if (type === "securityKey") {
     const user = useUserStore.getState().user;
     const username =
@@ -396,7 +593,7 @@ async function verifyCredential(
       });
     } else if (credential.type === "securityKey") {
       const config = credential.config;
-      const { encryptionKey } = await WebAuthn.getEncryptionKey(config);
+      const { encryptionKey } = await WebAuthn.getEncryptionKey(config as any);
 
       return await action({
         ...credential,

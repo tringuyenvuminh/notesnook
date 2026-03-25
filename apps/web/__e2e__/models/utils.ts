@@ -131,6 +131,23 @@ export async function fillConfirmPasswordDialog(page: Page, password: string) {
   await confirmDialog(dialog);
 }
 
+/** App lock credential setup (primary + optional Pro/Believer duress fields). */
+export async function fillAppLockCredentialSetupDialog(
+  page: Page,
+  primaryPassword: string,
+  duressPassword?: string
+) {
+  const dialog = page.locator(getTestId("password-dialog"));
+  await dialog.locator(getTestId("password")).fill(primaryPassword);
+  await dialog.locator(getTestId("confirmPassword")).fill(primaryPassword);
+  const duressField = dialog.locator(getTestId("duressPassword"));
+  if (duressPassword && (await duressField.isVisible())) {
+    await duressField.fill(duressPassword);
+    await dialog.locator(getTestId("confirmDuressPassword")).fill(duressPassword);
+  }
+  await confirmDialog(dialog);
+}
+
 export async function confirmDialog(dialog: Locator) {
   const dialogConfirm = dialog.locator(getTestId("dialog-yes"));
   await dialogConfirm.click();

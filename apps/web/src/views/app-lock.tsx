@@ -34,9 +34,14 @@ import { startIdleDetection } from "../utils/idle-detection";
 import { onPageVisibilityChanged } from "../utils/page-visibility";
 import { WebAuthn } from "../utils/webauthn";
 import { getDocumentTitle, setDocumentTitle } from "../utils/dom";
-import { CredentialWithoutSecret, useKeyStore } from "../interfaces/key-store";
+import {
+  APP_LOCK_DURESS_CREDENTIAL_ID,
+  CredentialWithoutSecret,
+  useKeyStore
+} from "../interfaces/key-store";
 import { strings } from "@notesnook/intl";
 import { DialogManager } from "../common/dialog-manager";
+import { markDuressWipePending } from "../common/duress-app-lock-wipe";
 
 export default function AppLock(props: PropsWithChildren<unknown>) {
   const credentials = useKeyStore((store) => store.activeCredentials());
@@ -53,6 +58,20 @@ export default function AppLock(props: PropsWithChildren<unknown>) {
   const passwordRef = useRef<HTMLInputElement>(null);
   const windowTitle = useRef(getDocumentTitle());
 
+  const formatUnlockError = (e: unknown) =>
+    typeof e === "string"
+      ? e
+      : e &&
+        typeof e === "object" &&
+        "message" in e &&
+        typeof (e as Error).message === "string"
+      ? (e as Error).message === "ciphertext cannot be decrypted using that key" ||
+        (e as Error).message === "Could not unwrap key." ||
+        (e as Error).message === "Wrong password"
+        ? "Wrong password."
+        : (e as Error).message || "Wrong password."
+      : JSON.stringify(e);
+
   const unlockWithPassword = useCallback(
     async (credential: CredentialWithoutSecret) => {
       if (credential.type !== "password") return;
@@ -67,24 +86,50 @@ export default function AppLock(props: PropsWithChildren<unknown>) {
         return;
       }
 
-      await useKeyStore
-        .getState()
-        .unlock({ ...credential, password })
-        .catch((e) => {
-          setError(
-            typeof e === "string"
-              ? e
-              : "message" in e && typeof e.message === "string"
-              ? e.message === "ciphertext cannot be decrypted using that key" ||
-                e.message === "Could not unwrap key."
-                ? "Wrong password."
-                : e.message || "Wrong password."
-              : JSON.stringify(e)
-          );
-        })
-        .finally(() => {
-          setIsUnlocking(false);
-        });
+      const keyStore = useKeyStore.getState();
+      const primary = keyStore.findCredential({
+        type: "password",
+        id: "password"
+      });
+      const duress = keyStore.findCredential({
+        type: "password",
+        id: APP_LOCK_DURESS_CREDENTIAL_ID
+      });
+
+      let unlocked = false;
+      let lastError: unknown;
+
+      if (primary && (await keyStore.credentialHasKey(primary))) {
+        try {
+          await keyStore.unlock({ type: "password", id: "password", password });
+          unlocked = true;
+        } catch (e) {
+          lastError = e;
+        }
+      }
+
+      if (
+        !unlocked &&
+        duress &&
+        (await keyStore.credentialHasKey(duress))
+      ) {
+        try {
+          await keyStore.unlock({
+            type: "password",
+            id: APP_LOCK_DURESS_CREDENTIAL_ID,
+            password
+          });
+          // DB is not initialized while the app is locked. Defer wipe until after db.init().
+          markDuressWipePending();
+          unlocked = true;
+        } catch (e) {
+          lastError = e;
+        }
+      }
+
+      if (!unlocked) setError(formatUnlockError(lastError));
+
+      setIsUnlocking(false);
     },
     []
   );
@@ -222,7 +267,9 @@ export default function AppLock(props: PropsWithChildren<unknown>) {
                         setIsUnlocking(true);
                         try {
                           const { encryptionKey } =
-                            await WebAuthn.getEncryptionKey(credential.config);
+                            await WebAuthn.getEncryptionKey(
+                              credential.config as any
+                            );
                           await useKeyStore
                             .getState()
                             .unlock({ ...credential, key: encryptionKey });
