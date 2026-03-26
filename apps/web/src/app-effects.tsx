@@ -39,6 +39,7 @@ import { desktop } from "./common/desktop-bridge";
 import { FeatureDialog } from "./dialogs/feature-dialog";
 import { AnnouncementDialog } from "./dialogs/announcement-dialog";
 import { logger } from "./utils/logger";
+import { initAppLockPinSetupReminder } from "./common/app-lock-pin-setup-reminder";
 
 export default function AppEffects() {
   const refreshNavItems = useStore((store) => store.refreshNavItems);
@@ -69,6 +70,7 @@ export default function AppEffects() {
         await scheduleBackups();
         await scheduleFullBackups();
         await scheduleExpiredNotesDeletion();
+        await initAppLockPinSetupReminder();
 
         if (useSettingStore.getState().isFullOfflineMode)
           // NOTE: we deliberately don't await here because we don't want to pause execution.
