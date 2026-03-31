@@ -153,6 +153,7 @@ export default defineConfig({
             mode: "production",
             workbox: { mode: "production" },
             injectManifest: {
+              maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
               globPatterns: ["**/*.{js,css,html,wasm}", "**/Inter-*.woff2"],
               globIgnores: [
                 "**/node_modules/**/*",
