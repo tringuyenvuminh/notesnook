@@ -1,0 +1,125 @@
+name: "🌐 Deploy Frontend to EC2"
+
+on:
+  # Tự động chạy khi push code vào nhánh main
+  push:
+    branches:
+      - main
+
+  # Cho phép chạy thủ công từ tab Actions trên GitHub
+  workflow_dispatch:
+
+# Chỉ cho phép 1 deploy chạy tại 1 thời điểm
+# Deploy mới sẽ hủy deploy cũ đang chạy
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: "🚀 Build & Deploy"
+    runs-on: ubuntu-22.04
+
+    steps:
+      # ────────────────────────────────────────
+      # 📥 1. Checkout source code
+      # ────────────────────────────────────────
+      - name: 📥 Checkout source code
+        uses: actions/checkout@v4
+
+      # ────────────────────────────────────────
+      # 🟢 2. Setup Node.js với Cache
+      # ────────────────────────────────────────
+      - name: 🟢 Setup Node.js
+        uses: ./.github/actions/setup-node-with-cache
+
+      # ────────────────────────────────────────
+      # 📦 3. Install dependencies
+      # ────────────────────────────────────────
+      - name: 📦 Install dependencies
+        run: npm install --prefer-offline --no-audit
+
+      # ────────────────────────────────────────
+      # 🔗 4. Bootstrap monorepo (chỉ web scope)
+      # ────────────────────────────────────────
+      - name: 🔗 Bootstrap monorepo
+        run: npm run bootstrap -- --scope=web
+
+      # ────────────────────────────────────────
+      # 🏗️ 5. Build Frontend
+      # ────────────────────────────────────────
+      - name: 🏗️ Build Frontend
+        run: npm run build:web
+
+      # ────────────────────────────────────────
+      # ☁️ 6. Cấu hình AWS Credentials
+      # ────────────────────────────────────────
+      - name: ☁️ Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # ────────────────────────────────────────
+      # 🔑 7. Tạo SSH key tạm & cấu hình SSH
+      # ────────────────────────────────────────
+      - name: 🔑 Setup SSH for EC2 Instance Connect
+        env:
+          INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+        run: |
+          mkdir -p ~/.ssh
+
+          # Tạo SSH key pair tạm thời (chỉ dùng cho lần deploy này)
+          ssh-keygen -t ed25519 -f ~/.ssh/deploy_key -N "" -q
+
+          # Tạo SSH config để dùng EC2 Instance Connect Endpoint
+          echo "Host ec2-target" > ~/.ssh/config
+          echo "  User ubuntu" >> ~/.ssh/config
+          echo "  IdentityFile ~/.ssh/deploy_key" >> ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+          echo "  ProxyCommand aws ec2-instance-connect open-tunnel --instance-id ${INSTANCE_ID}" >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      # ────────────────────────────────────────
+      # 🚀 8. Deploy build lên EC2 qua Rsync + EICE
+      # ────────────────────────────────────────
+      - name: 🚀 Deploy to EC2
+        env:
+          INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+        run: |
+          # Đẩy public key tạm lên EC2 (có hiệu lực 60 giây)
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id "$INSTANCE_ID" \
+            --instance-os-user ubuntu \
+            --ssh-public-key file://~/.ssh/deploy_key.pub
+
+          # Rsync qua EICE tunnel (chỉ copy file thay đổi)
+          rsync -avz --delete \
+            -e "ssh -F $HOME/.ssh/config" \
+            ./apps/web/build/ \
+            ec2-target:/var/www/notesnook-web/
+
+      # ────────────────────────────────────────
+      # 🔄 9. Reload Nginx (zero downtime)
+      # ────────────────────────────────────────
+      - name: 🔄 Reload Nginx
+        env:
+          INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+        run: |
+          # Đẩy public key lần nữa (key trước có thể đã hết hạn 60s)
+          aws ec2-instance-connect send-ssh-public-key \
+            --instance-id "$INSTANCE_ID" \
+            --instance-os-user ubuntu \
+            --ssh-public-key file://~/.ssh/deploy_key.pub
+
+          # Test config Nginx rồi reload
+          ssh -F $HOME/.ssh/config ec2-target \
+            "sudo nginx -t && sudo systemctl reload nginx"
+
+      # ────────────────────────────────────────
+      # 🧹 10. Cleanup SSH Key
+      # ────────────────────────────────────────
+      - name: 🧹 Cleanup SSH Key
+        if: always()
+        run: rm -rf ~/.ssh/deploy_key ~/.ssh/deploy_key.pub ~/.ssh/config
